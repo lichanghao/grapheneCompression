@@ -1,0 +1,40 @@
+EXPLANATION OF THE LOADING CODES:
+
+Single tube:
+
+-1: Only 3 dof's of one end are prescribed. These dof's
+    prevent rigid body motions. Then structure is relaxed.
+
+ 0: all the x dofs of one end plus 3 dofs are prescribed. Then
+    the structure is relaxed.
+
+ 1: bending
+
+13: This is bend and Compress at the same time. the compression
+    is not given in %, but in nm.
+
+11: bending so that the hypothetical semi-circle formed by the tube
+    has the length of the original tube, i.e. the ends are rotated
+    and compressed. Note this does not work if RESTART!!!
+
+ 2: twisting
+
+ 3: Compression with ends totally prescribed
+
+ 4: Compression with only x dofs prescribed at ends plus 3 dofs
+
+ 5: load at one end and the other is fixed
+
+ 6: squeeze the tube
+
+ 7: Compress the tube holding only 4 points
+
+ 8: vertical forces at ends, upper and lower lines don't z-move, and 
+    central 3 nodes fixed.
+
+10: Ends and central lines don't z-move. in execution it becomes code 0 
+
+In nested tubes, option -1 does not exist.
+
+In running the code, -69 means tha dynamical relaxation is carried out.
+

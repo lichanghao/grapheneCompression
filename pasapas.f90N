@@ -1,0 +1,172 @@
+SUBROUTINE pasapas(mesh0,mat1,x0,eta,BCs,x0_short,x0_BC, &
+                shapef,weight,ngauss,F0,J0,forces, f_loc, f_ext,  &
+				f_short,W_dens,crit, &
+				nW_hat,imperfect,fact_imp, &
+				ylength,vdw1,ID,nprocs,E_out,ntab,W,NWORK,Prec,&
+                                elem,nfem_nbor,fem_nborlist,nlayer,ngroup,nlateral,nelem,ntag)
+USE data_mesh
+USE data_tensor22
+USE data_vector2
+USE data_mat
+USE data_vdw
+USE data_BC
+implicit REAL(8) (a-h,o-z)
+implicit INTEGER*4 (i-n)
+TYPE(mesh) :: mesh0
+TYPE(material) :: mat1
+TYPE(vdw_data):: vdw1
+TYPE(BC_data):: BCs
+TYPE(tensor22) :: F0(mesh0%numele)
+TYPE(vector2) :: eta(ngauss,(mesh0%numele))
+REAL(8) :: x0(3*(mesh0%numnods+mesh0%nedge)), forces(3*(mesh0%numnods+mesh0%nedge))
+REAL(8) :: x00(3*(mesh0%numnods+mesh0%nedge)),forces0(3*(mesh0%numnods+mesh0%nedge))
+REAL(8) :: W_dens(mesh0%numele), J0(mesh0%numele), f_ext(3*(mesh0%numnods))
+REAL(8) :: f_loc(3*(mesh0%numnods+mesh0%nedge))
+REAL(8) :: W(NWORK), Prec(BCs%ndofOP)
+REAL(8) :: shapef(ngauss,12,6), weight(ngauss)
+DIMENSION :: x0_short(BCs%ndofOP),x0_BC(BCs%ndofBC), f_short(BCs%ndofOP)
+INTEGER(4) :: ntab(mesh0%numnods)
+INTEGER(4) :: elem(3,mesh0%numele),fem_nborlist(mesh0%numnods,0:6),nfem_nbor
+REAL(8) crit(2), E_out(4)
+CHARACTER(80) name1, name2, name3
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+INTEGER(4) :: ngroup(nlayer),ntag(mesh0%numnods)
+INTEGER(4) :: nlateral(nlayer),nelem(nlayer)
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+PARAMETER (pi0=3.14159265358d0)
+
+
+xlength=maxval(x0(3*BCs%mnodBC(:,1)-2))-minval(x0(3*BCs%mnodBC(:,1)-2))
+
+call minimize_free(mesh0,mat1,x0,eta,x0_BC,BCs%mdofBC,BCs%mdofOP,BCs%ndofBC,BCs%ndofOP, &
+     BCs%ndofBC+BCs%ndofOP,shapef,weight,ngauss,F0,J0,forces,f_loc,f_ext,E_min0,W_dens,  &
+     crit(1),nW_hat,crit(2),E_out,vdw1,GNORM)
+
+write(*,*) 'enforce the boundary change'
+x0_BC(:) = x0(BCs%mdofBC(:))
+
+if(ID.eq.0)then
+   open(unit=78,file='energy.dat',status='old',position='append')
+   write(78,'(e14.5,4e16.8)') 0., E_out(1), E_out(2), E_out(3), E_out(4),GNORM 
+   close(78)
+   write(*,*) 'write out the ensight file for free'
+ call ensight_out(0.05d0,x0,mesh0,elem,nfem_nbor,fem_nborlist,nlayer,ngroup,nlateral,nelem,ntag)
+endif
+
+
+!BCs%nloadstep=0  !check initial configuration
+
+
+do iload=1,BCs%nloadstep
+   vdw1%neval=0 ! so that update neighbors in first iteration
+   ! Increment rotation
+   if(iload .gt.0)then ! SLZ add this to accomodate the relaxed configuration in unloaded case
+      call load_doit(BCs,x0, f_ext,mesh0%numnods,xlength,vdw1%denter_x,iload,mesh0,x0_BC)
+   endif
+   ! Introduce random imperfections
+   if (imperfect.eq.1) then
+      do ii=1,mesh0%numnods
+         x0(3*ii-2)= x0(3*ii-2) + mat1%A0*2.*(rand(ii)-.5)*fact_imp
+         x0(3*ii-1)= x0(3*ii-1) + mat1%A0*2.*(rand(ii)-.5)*fact_imp   
+         x0(3*ii)= x0(3*ii)     + mat1%A0*2.*(rand(ii)-.5)*fact_imp
+      end do
+   end if
+
+   IF(ID.EQ.0) THEN
+      write(*,*) '***************************************************'
+      write(*,*) 
+      write(*,*) ' Load Step         :', iload
+      write(*,*) ' =========         :', iload
+      write(*,*) 
+      write(77,*) '***************************************************'
+      write(77,*) 
+      write(77,*) ' Load Step         :', iload
+      write(77,*) ' =========         :', iload
+      write(77,*) 
+   ENDIF
+   ! Management and minimization
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!mesh0%nnflag=0
+   call short(x0,x0_short,BCs%mdofOP,BCs%ndofBC,BCs%ndofOP)
+   call minimize(mesh0,mat1,x0,eta,x0_short,x0_BC,BCs%mdofBC,BCs%mdofOP,BCs%ndofBC,BCs%ndofOP, &
+        shapef,weight,ngauss,F0,J0,forces,f_loc,f_ext,E_min,f_short,W_dens,  &
+        crit(1),nW_hat,crit(2),E_out,vdw1,W,NWORK,Prec,GNORM)
+   call long(x0,x0_short,x0_BC,BCs%mdofBC,BCs%mdofOP,BCs%ndofBC,BCs%ndofOP,mesh0)
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!   
+!  mesh0%nnflag=1 
+   !  call energy(mesh0,x0,eta,mat1,shapef,weight,ngauss,F0,J0, &
+   !            W_dens,f,forces,f_loc,f_ext,nW_hat,crit,E_out,vdw1)
+   
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   ! OUTPUT
+   IF(ID.EQ.0) THEN
+      write(*,*)  ' Equilibrium energy:', E_out(1)
+      write(77,*)  ' Equilibrium energy:', E_out(1)
+      open(unit=78,file='energy.dat',status='old',position='append')   ! energy output file
+      open(unit=50,file='force.dat',status='unknown',position='append')   ! force output file
+
+      if ((BCs%nCodeLoad.eq.-1).or.(BCs%nCodeLoad.eq.0).or.(BCs%nCodeLoad.eq.1).or. &
+           (BCs%nCodeLoad.eq.2).or.(BCs%nCodeLoad.eq.5).or.(BCs%nCodeLoad.eq.11).or. &
+           (BCs%nCodeLoad.eq.13).or.(BCs%nCodeLoad.eq.8).or.(BCs%nCodeLoad.eq.10)) then
+         write(78,'(e14.5,4e16.8,d17.9)') BCs%value*iload/BCs%nloadstep*180./pi0, &
+              E_out(1), E_out(2), E_out(3), E_out(4),GNORM !this goes to energy file
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+         call get_reac(mesh0,forces,BCs%nCodeLoad,ylength, & 
+              BCs%mdofBC,BCs%ndofBC,reaction1,reaction2,x0,BCs)
+         !    write(78,*) angle*iload/nloadstep, E_min, reaction1 !this goes to energy file
+         write(50,'(4f17.9)') BCs%value*iload/BCs%nloadstep, E_min,reaction1,reaction2
+         close(50)
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+      else if ((BCs%nCodeLoad.eq.6).or.(BCs%nCodeLoad.eq.66).or.(BCs%nCodeLoad.eq.7)) then
+         write(78,'(e14.5,5e16.8,d17.9)') BCs%value*iload/BCs%nloadstep, &
+              E_out(1), E_out(2), E_out(3), E_out(4),GNORM !this goes to energy file
+      else
+         ! the reaction we get is a force per unit length, it is divided by the perimeter
+         call get_reac(mesh0,forces,BCs%nCodeLoad,ylength, & 
+              BCs%mdofBC,BCs%ndofBC,reaction1,reaction2)
+         !    write(78,*) angle*iload/nloadstep, E_min, reaction1 !this goes to energy file
+         write(78,'(4f17.9)') BCs%value*iload/BCs%nloadstep, E_min,reaction1,reaction2
+         close(78)
+      end if
+
+      call ensight_out((iload*2+1)*0.1d0,x0,mesh0,elem,nfem_nbor,fem_nborlist,nlayer,ngroup,nlateral,nelem,ntag)
+   ENDIF
+
+   ! repeat for totally free configuaration
+!!$   x00 = x0
+!!$   forces0 = forces
+!!$   call minimize_free(mesh0,mat1,x00,eta,x0_BC,BCs%mdofBC,BCs%mdofOP,BCs%ndofBC,BCs%ndofOP, &
+!!$        BCs%ndofBC+BCs%ndofOP,shapef,weight,ngauss,F0,J0,forces0,f_loc,f_ext,E_min0,W_dens,  &
+!!$        crit(1),nW_hat,crit(2),E_out,vdw1,GNORM)
+!!$
+!!$
+!!$   IF(ID.EQ.0) THEN
+!!$      write(*,*)  ' Equilibrium energy:', E_out(1)
+!!$      write(77,*)  ' Equilibrium energy:', E_out(1)
+!!$      open(unit=78,file='energy.dat',status='old',position='append')   ! energy output file
+!!$      if ((BCs%nCodeLoad.eq.-1).or.(BCs%nCodeLoad.eq.0).or.(BCs%nCodeLoad.eq.1).or. &
+!!$           (BCs%nCodeLoad.eq.2).or.(BCs%nCodeLoad.eq.5).or.(BCs%nCodeLoad.eq.11).or. &
+!!$           (BCs%nCodeLoad.eq.13).or.(BCs%nCodeLoad.eq.8).or.(BCs%nCodeLoad.eq.10)) then
+!!$         write(78,'(e14.5,4e16.8,d17.9)') BCs%value*iload/BCs%nloadstep*180./pi0, &
+!!$              E_out(1), E_out(2), E_out(3), E_out(4),GNORM !this goes to energy file
+!!$      else if ((BCs%nCodeLoad.eq.6).or.(BCs%nCodeLoad.eq.66).or.(BCs%nCodeLoad.eq.7)) then
+!!$         write(78,'(e14.5,4e16.8,d17.9)') BCs%value*iload/BCs%nloadstep, &
+!!$              E_out(1), E_out(2), E_out(3), E_out(4),GNORM !this goes to energy file
+!!$      else
+!!$         ! the reaction we get is a force per unit length, it is divided by the perimeter
+!!$         call get_reac(mesh0,forces,BCs%nCodeLoad,ylength, & 
+!!$              BCs%mdofBC,BCs%ndofBC,reaction1,reaction2)
+!!$         !    write(78,*) angle*iload/nloadstep, E_min, reaction1 !this goes to energy file
+!!$         write(78,'(4f17.9)') BCs%value*iload/BCs%nloadstep, E_min0,reaction1,reaction2
+!!$         close(78)
+!!$      end if
+!!$
+!!$      call ensight_out((iload*2+2)*0.1d0,x00,mesh0,elem,nfem_nbor,fem_nborlist,BCs)
+!!$   ENDIF
+
+end do
+
+
+END SUBROUTINE pasapas
+
